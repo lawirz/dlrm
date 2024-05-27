@@ -12,7 +12,8 @@ import torch.distributed as dist
 from torch.autograd import Function
 from torch.autograd.profiler import record_function
 from torch.nn.parallel import DistributedDataParallel as DDP
-
+import accl_process_group as accl
+from mpi4py.MPI import COMM_WORLD as mpi
 
 try:
     import torch_ccl
@@ -62,7 +63,7 @@ def get_split_lengths(n):
     return (my_len, splits)
 
 
-def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend=""):
+def init_distributed(in_rank=-1, local_rank=-1, in_size=-1, use_gpu=False, backend=""):
     global myreq
     global my_rank
     global my_size
@@ -75,6 +76,42 @@ def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend="")
     num_mpi_ranks = env2int(
         ["PMI_SIZE", "OMPI_COMM_WORLD_SIZE", "MV2_COMM_WORLD_SIZE", "WORLD_SIZE"]
     )
+    if backend == "accl":
+        #dummy initialization
+        comms = 'udp'
+        simulator = True
+        rxbufsize = 1500 * 4
+
+        global rank, size
+        if 'MASTER_ADDR' not in os.environ:
+            os.environ['MASTER_ADDR'] = 'localhost'
+        if 'MASTER_PORT' not in os.environ:
+            os.environ['MASTER_PORT'] = '30500'
+        
+        accl_rank = mpi.Get_rank()
+        accl_size = mpi.Get_size()
+        accl_ranks = [accl.Rank("127.0.0.1", 5500 + i, i, rxbufsize)
+             for i in range(accl_size)]
+        print(f"[ACCL]: Starting tests on rank {accl_rank} with size {accl_size}")
+        if comms == 'udp':
+            design = accl.ACCLDesign.udp
+        elif comms == 'tcp':
+            design = accl.ACCLDesign.tcp
+        elif comms == 'cyt_rdma':
+            design = accl.ACCLDesign.cyt_rdma
+        else:
+            sys.exit('Design "' + comms + '" currently not supported')
+
+        accl.create_process_group(accl_ranks, design, bufsize=rxbufsize, initialize=True, simulation=simulator)
+        dist.init_process_group("ACCL", rank=accl_rank, world_size=accl_size)
+
+        my_rank = accl_rank
+        my_size = accl_size
+
+        myreq = Request()
+        
+        return
+    
     if backend == "" and num_mpi_ranks > 1:
         if torch_ccl and env2int(["CCL_WORKER_COUNT"]) > 0:
             backend = "ccl"
@@ -90,11 +127,11 @@ def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend="")
 
     if backend != "":
         # guess Rank and size
-        if rank == -1:
+        if in_rank == -1:
             rank = env2int(
                 ["PMI_RANK", "OMPI_COMM_WORLD_RANK", "MV2_COMM_WORLD_RANK", "RANK"], 0
             )
-        if size == -1:
+        if in_size == -1:
             size = env2int(
                 [
                     "PMI_SIZE",
@@ -105,9 +142,9 @@ def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend="")
                 1,
             )
         if not os.environ.get("RANK", None) and rank != -1:
-            os.environ["RANK"] = str(rank)
+            os.environ["RANK"] = str(in_rank)
         if not os.environ.get("WORLD_SIZE", None) and size != -1:
-            os.environ["WORLD_SIZE"] = str(size)
+            os.environ["WORLD_SIZE"] = str(in_size)
         if not os.environ.get("MASTER_PORT", None):
             os.environ["MASTER_PORT"] = "29500"
         if not os.environ.get("MASTER_ADDR", None):
@@ -119,7 +156,7 @@ def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend="")
                 ],
                 1,
             )
-            if local_size != size and backend != "mpi":
+            if local_size != in_size and backend != "mpi":
                 print(
                     "Warning: Looks like distributed multinode run but MASTER_ADDR env not set, using '127.0.0.1' as default"
                 )
@@ -128,7 +165,7 @@ def init_distributed(rank=-1, local_rank=-1, size=-1, use_gpu=False, backend="")
                 )
             os.environ["MASTER_ADDR"] = "127.0.0.1"
 
-    if size > 1:
+    if in_size > 1:
         if local_rank == -1:
             my_local_rank = env2int(
                 [
@@ -584,7 +621,7 @@ def all_gather(input, lengths, dim=0):
 
 def barrier():
     if my_size > 1:
-        dist.barrier()
+        mpi.Barrier()
 
 
 # Override builtin print function to print only from rank 0

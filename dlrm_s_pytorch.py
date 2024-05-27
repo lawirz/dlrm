@@ -518,6 +518,7 @@ class DLRM_Net(nn.Module):
         return R
 
     def forward(self, dense_x, lS_o, lS_i):
+        # print("solo forward")
         if ext_dist.my_size > 1:
             # multi-node multi-device run
             return self.distributed_forward(dense_x, lS_o, lS_i)
@@ -529,6 +530,7 @@ class DLRM_Net(nn.Module):
             return self.parallel_forward(dense_x, lS_o, lS_i)
 
     def distributed_forward(self, dense_x, lS_o, lS_i):
+        # print("distributed forward")
         batch_size = dense_x.size()[0]
         # WARNING: # of ranks must be <= batch size in distributed_forward call
         if batch_size < ext_dist.my_size:
@@ -588,6 +590,7 @@ class DLRM_Net(nn.Module):
         return z
 
     def sequential_forward(self, dense_x, lS_o, lS_i):
+        # print("sequential forward")
         # process dense features (using bottom mlp), resulting in a row vector
         x = self.apply_mlp(dense_x, self.bot_l)
         # debug prints
@@ -615,6 +618,7 @@ class DLRM_Net(nn.Module):
         return z
 
     def parallel_forward(self, dense_x, lS_o, lS_i):
+        # print("parallel forward")
         ### prepare model (overwrite) ###
         # WARNING: # of devices must be >= batch size in parallel_forward call
         batch_size = dense_x.size()[0]
@@ -992,7 +996,7 @@ def run():
     # gpu
     parser.add_argument("--use-gpu", action="store_true", default=False)
     # distributed
-    parser.add_argument("--local_rank", type=int, default=-1)
+    parser.add_argument("--local-rank", type=int, default=-1)
     parser.add_argument("--dist-backend", type=str, default="")
     # debugging and profiling
     parser.add_argument("--print-freq", type=int, default=1)
