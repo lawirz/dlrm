@@ -26,12 +26,23 @@ try:
 except ImportError as e:
     torch_ucc = False
 
+import logging
+    
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+
+logger = logging.getLogger(__name__)
+
+if "ACCL_DEBUG" in os.environ and os.environ["ACCL_DEBUG"]=="1":
+    logger.setLevel(logging.DEBUG)
+else:
+    logger.setLevel(logging.WARNING)
+    
 
 my_rank = -1
 my_size = -1
 my_local_rank = -1
 my_local_size = -1
-alltoall_supported = False
+alltoall_supported = True
 a2a_impl = os.environ.get("DLRM_ALLTOALL_IMPL", "")
 
 myreq = None
@@ -63,7 +74,7 @@ def get_split_lengths(n):
     return (my_len, splits)
 
 
-def init_distributed(in_rank=-1, local_rank=-1, in_size=-1, use_gpu=False, backend=""):
+def init_distributed(args, in_rank=-1, local_rank=-1, in_size=-1, use_gpu=False, backend=""):
     global myreq
     global my_rank
     global my_size
@@ -78,31 +89,65 @@ def init_distributed(in_rank=-1, local_rank=-1, in_size=-1, use_gpu=False, backe
     )
     if backend == "accl":
         #dummy initialization
-        comms = 'udp'
-        simulator = True
-        rxbufsize = 1500 * 4
+
+
+        host_file = args.host_file
+        fpga_file = args.fpga_file
+        comms = args.comms
+        start_port = 5005
+        
 
         global rank, size
-        if 'MASTER_ADDR' not in os.environ:
-            os.environ['MASTER_ADDR'] = 'localhost'
-        if 'MASTER_PORT' not in os.environ:
-            os.environ['MASTER_PORT'] = '30500'
-        
+        if args.master_address==None:
+            args.master_address = "localhost"
+        if args.master_port==None:
+            args.master_port = "30505"
+        os.environ['MASTER_ADDR'] = args.master_address
+        os.environ['MASTER_PORT'] = args.master_port
+        rxbufsize = 4096 * 1024
+
+        logger.debug("os.environ['MASTER_ADDR']: " + str(os.environ['MASTER_ADDR']))
+        logger.debug("os.environ['MASTER_PORT']: " + str(os.environ['MASTER_PORT']))
+        logger.debug("simulator: " + str(args.simulator))
+        logger.debug("comms: " + str(args.comms))        
+
+
         accl_rank = mpi.Get_rank()
         accl_size = mpi.Get_size()
-        accl_ranks = [accl.Rank("127.0.0.1", 5500 + i, i, rxbufsize)
-             for i in range(accl_size)]
-        print(f"[ACCL]: Starting tests on rank {accl_rank} with size {accl_size}")
-        if comms == 'udp':
-            design = accl.ACCLDesign.udp
-        elif comms == 'tcp':
-            design = accl.ACCLDesign.tcp
-        elif comms == 'cyt_rdma':
-            design = accl.ACCLDesign.cyt_rdma
-        else:
-            sys.exit('Design "' + comms + '" currently not supported')
+        
+        if not args.simulator:
+            #default from test.cpp
+            rxbufsize = 4096 * 1024
+            if host_file==None or fpga_file==None: sys.exit('Host and FPGA file need to be specified in hardware mode')
+        
+            with open(host_file, 'r') as hf:
+                host_ips = hf.read().splitlines()
+            
+            with open(fpga_file, 'r') as ff:
+                fpga_ips = ff.read().splitlines()
 
-        accl.create_process_group(accl_ranks, design, bufsize=rxbufsize, initialize=True, simulation=simulator)
+            if comms == "cyt_rdma":
+                accl_ranks = [accl.Rank(a, start_port, i, rxbufsize) for i, a in enumerate(fpga_ips)]
+            else:
+                accl_ranks = [accl.Rank(a, start_port + i, 0, rxbufsize) for i, a in enumerate(fpga_ips)]
+        else:
+            # Somehow the simulator gets stuck if I use the same rxbufsize
+            rxbufsize = 4096 * 1024
+            accl_ranks = [accl.Rank("127.0.0.1", 5500 + i, i, rxbufsize) for i in range(size)]
+
+        logger.debug(f'Ranks: {accl_ranks}')
+
+        if args.comms == 'udp':
+            design = accl.ACCLDesign.udp
+        elif args.comms == 'tcp':
+            design = accl.ACCLDesign.tcp
+        elif args.comms == 'cyt_rdma': # and not simulator:
+            design = accl.ACCLDesign.cyt_rdma
+    
+
+        mpi.Barrier()            
+        
+        accl.create_process_group(accl_ranks, design, bufsize=rxbufsize, initialize=True, simulation=args.simulator)
         dist.init_process_group("ACCL", rank=accl_rank, world_size=accl_size)
 
         my_rank = accl_rank

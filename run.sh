@@ -6,13 +6,6 @@ if [[ $(pwd) != *pytorch_ddp/dlrm ]]; then
 	exit 1
 fi
 
-if [[ -v ACCL_SCRIPT ]]; then
-    SCRIPT_NAME="$ACCL_SCRIPT"
-else
-    # SCRIPT_NAME="dlrm_s_pytorch.py --mini-batch-size=2048 --data-size=6"
-    SCRIPT_NAME="dlrm_s_pytorch.py --arch-embedding-size=\"800-800\" --arch-sparse-feature-size=64 --arch-mlp-bot=\"128-128-128-64\" --arch-mlp-top=\"512-512-512-256-1\" --max-ind-range=40000000 --data-generation=random --loss-function=bce --round-targets=True --learning-rate=1.0 --mini-batch-size=2048 --print-freq=2 --print-time --test-freq=2 --test-mini-batch-size=2048 --memory-map --num-batches=10"
-    echo "Variable ACCL_SCRIPT not set. Assuming $SCRIPT_NAME"
-fi
 
 # state variables
 mkdir -p "$(pwd)/accl_log"
@@ -20,7 +13,6 @@ mkdir -p "$(pwd)/accl_log"
 # point this to python venv, which has the relevant libraries installed
 VENV_ACTIVATE=$(pwd)/../venv/bin/activate
 SETUP_SH=$(pwd)/../setup.sh
-SCRIPT=$(pwd)/$SCRIPT_NAME
 HOST_FILE=./accl_log/host
 FPGA_FILE=./accl_log/fpga
 
@@ -87,11 +79,24 @@ else
     # MPI_ARGS="-f $HOST_FILE --iface ens4"
 fi
 
-ARG="$ARG --dist-backend=accl\""
+if [[ -v ACCL_SCRIPT ]]; then
+    SCRIPT_NAME="$ACCL_SCRIPT"
+else
+    # SCRIPT_NAME="dlrm_s_pytorch.py --mini-batch-size=2048 --data-size=6"
+    # SCRIPT_NAME="dlrm_s_pytorch.py --arch-embedding-size=\"8000-8000\" --arch-sparse-feature-size=64 --arch-mlp-bot=\"128-128-128-64\" --arch-mlp-top=\"512-512-512-256-1\" --max-ind-range=40000000 --data-generation=dataset --data-set=kaggle --raw-data-file=./dataset/train.txt --processed-data-file=dataset/kaggleAdDisplayChallenge_processed.npz --loss-function=bce --round-targets=True --learning-rate=1.0 --mini-batch-size=2048 --print-freq=2 --print-time --test-freq=2 --test-mini-batch-size=2048 --memory-map --num-batches=10"
+    SCRIPT_NAME="dlrm_s_pytorch.py --arch-sparse-feature-size=16 --arch-mlp-bot=\"13-512-256-64-16\" --arch-mlp-top=\"512-256-1\" --data-generation=dataset --data-set=kaggle --raw-data-file=./dataset/train.txt --processed-data-file=./dataset/kaggleAdDisplayChallenge_processed.npz --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=128 --print-freq=1 --print-time --test-mini-batch-size=16384 --test-num-workers=16 --memory-map --save-model=a2a_model_hw.pt"
+
+    echo "Variable ACCL_SCRIPT not set. Assuming $SCRIPT_NAME"
+fi
+
+SCRIPT="$(pwd)/$SCRIPT_NAME"
+
+
+ARG="$ARG  -c $ACCL_COMMS -i $HOST_FILE -f $FPGA_FILE -a $MASTER_IP -p $MASTER_PORT --dist-backend=accl\""
 
 #---------------Running it-------------
 
-EXEC="bash -c \"source $VENV_ACTIVATE && source $SETUP_SH  && MASTER_ADDR=$MASTER_IP MASTER_PORT=$MASTER_PORT python $SCRIPT"
+EXEC="bash -c \"source $VENV_ACTIVATE && source $SETUP_SH  && python $SCRIPT"
 
 
 echo "Run command: $EXEC $ARG"

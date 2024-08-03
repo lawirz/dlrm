@@ -99,6 +99,7 @@ from torch.nn.parallel.scatter_gather import gather, scatter
 from torch.nn.parameter import Parameter
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
+from mpi4py.MPI import COMM_WORLD as mpi
 
 # mixed-dimension trick
 from tricks.md_embedding_bag import md_solver, PrEmbeddingBag
@@ -1028,6 +1029,15 @@ def run():
     parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
+    parser.add_argument('-s', '--simulator', action='store_true',
+                        default=False, help='Use simulation instead of '
+                                            'hardware')
+    parser.add_argument('-c', '--comms', choices=['udp', 'tcp', 'cyt_rdma'], default='tcp',
+                        help='Run tests over specified communication backend')
+    parser.add_argument('-i', '--host-file', type=str, help='Specify the file, where the host IPs are listed')
+    parser.add_argument('-f', '--fpga-file', type=str, help='Specify the file, where the FPGA IPs are listed')
+    parser.add_argument('-a','--master-address', type=str)
+    parser.add_argument('-p','--master-port', type=str)
 
     global args
     global nbatches
@@ -1081,7 +1091,7 @@ def run():
     use_gpu = args.use_gpu and torch.cuda.is_available()
 
     if not args.debug_mode:
-        ext_dist.init_distributed(
+        ext_dist.init_distributed(args,
             local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend
         )
 
@@ -1338,11 +1348,11 @@ def run():
     if ext_dist.my_size > 1:
         if use_gpu:
             device_ids = [ext_dist.my_local_rank]
-            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l, device_ids=device_ids)
-            dlrm.top_l = ext_dist.DDP(dlrm.top_l, device_ids=device_ids)
+            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l, device_ids=device_ids, bucket_cap_mb=2)
+            dlrm.top_l = ext_dist.DDP(dlrm.top_l, device_ids=device_ids, bucket_cap_mb=2)
         else:
-            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l)
-            dlrm.top_l = ext_dist.DDP(dlrm.top_l)
+            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l, bucket_cap_mb=2)
+            dlrm.top_l = ext_dist.DDP(dlrm.top_l, bucket_cap_mb=2)
 
     if not args.inference_only:
         if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
