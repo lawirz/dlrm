@@ -795,14 +795,16 @@ def inference(
             continue
 
         # forward pass
-        Z_test = dlrm_wrap(
-            X_test,
-            lS_o_test,
-            lS_i_test,
-            use_gpu,
-            device,
-            ndevices=ndevices,
-        )
+        with torch.no_grad():
+            print("doing no_grad forward pass")
+            Z_test = dlrm_wrap(
+                X_test,
+                lS_o_test,
+                lS_i_test,
+                use_gpu,
+                device,
+                ndevices=ndevices,
+            )
         ### gather the distributed results on each rank ###
         # For some reason it requires explicit sync before all_gather call if
         # tensor is on GPU memory
