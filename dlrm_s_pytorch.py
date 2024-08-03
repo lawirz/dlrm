@@ -1416,24 +1416,24 @@ def run():
 
     # Load model is specified
     if not (args.load_model == ""):
-        print("Loading saved model {}".format(args.load_model))
+        print("Loading saved model {}".format(args.load_model + "_" + str(mpi.Get_rank())))
         if use_gpu:
             if dlrm.ndevices > 1:
                 # NOTE: when targeting inference on multiple GPUs,
                 # load the model as is on CPU or GPU, with the move
                 # to multiple GPUs to be done in parallel_forward
-                ld_model = torch.load(args.load_model)
+                ld_model = torch.load(args.load_model + "_" + str(mpi.Get_rank()))
             else:
                 # NOTE: when targeting inference on single GPU,
                 # note that the call to .to(device) has already happened
                 ld_model = torch.load(
-                    args.load_model,
+                    args.load_model + "_" + str(mpi.Get_rank()),
                     map_location=torch.device("cuda"),
                     # map_location=lambda storage, loc: storage.cuda(0)
                 )
         else:
             # when targeting inference on CPU
-            ld_model = torch.load(args.load_model, map_location=torch.device("cpu"))
+            ld_model = torch.load(args.load_model + "_" + str(mpi.Get_rank()), map_location=torch.device("cpu"))
         dlrm.load_state_dict(ld_model["state_dict"])
         ld_j = ld_model["iter"]
         ld_k = ld_model["epoch"]
@@ -1730,8 +1730,8 @@ def run():
                             model_metrics_dict["opt_state_dict"] = (
                                 optimizer.state_dict()
                             )
-                            print("Saving model to {}".format(args.save_model))
-                            torch.save(model_metrics_dict, args.save_model)
+                            print("Saving model to {}".format(args.save_model + "_" + str(mpi.Get_rank())))
+                            torch.save(model_metrics_dict, args.save_model + "_" + str(mpi.Get_rank()))
 
                         if args.mlperf_logging:
                             mlperf_logger.barrier()
